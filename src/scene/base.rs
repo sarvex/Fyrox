@@ -143,7 +143,7 @@ pub struct LodGroup {
 #[derive(Copy, Clone, PartialOrd, PartialEq, Ord, Eq, Debug, Inspect)]
 #[repr(u32)]
 pub enum Mobility {
-    /// Transform cannot be changed.
+    /// Transform changes are ignored.
     ///
     /// ## Scene and performance.
     ///
@@ -161,7 +161,7 @@ pub enum Mobility {
     /// Specular lighting is not supported.
     Static = 0,
 
-    /// Transform cannot be changed, but other node-dependent properties are changeable.
+    /// Transform changes are ignored, but other node-dependent properties are changeable.
     ///
     /// ## Scene and performance.
     ///

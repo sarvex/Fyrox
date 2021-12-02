@@ -82,7 +82,9 @@ impl ForwardRenderer {
                 .and_then(|shader_set| shader_set.render_passes.get(&self.render_pass_name))
             {
                 for instance in batch.instances.iter() {
-                    if camera.visibility_cache.is_visible(instance.owner) {
+                    if instance.owner.is_none()
+                        || camera.visibility_cache.is_visible(instance.owner)
+                    {
                         let view_projection = if instance.depth_offset != 0.0 {
                             let mut projection = camera.projection_matrix();
                             projection[14] -= instance.depth_offset;

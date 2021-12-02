@@ -241,9 +241,11 @@ impl PointShadowMapRenderer {
                     .and_then(|shader_set| shader_set.render_passes.get(&self.render_pass_name))
                 {
                     for instance in batch.instances.iter() {
-                        let node = &graph[instance.owner];
-
-                        if should_cast_shadows(node, &frustum) {
+                        if graph
+                            .try_get(instance.owner)
+                            .map(|node| should_cast_shadows(node, &frustum))
+                            .unwrap_or(true)
+                        {
                             statistics += framebuffer.draw(
                                 geometry,
                                 state,

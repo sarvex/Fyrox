@@ -114,6 +114,18 @@ pub struct VertexAttributeDescriptor {
     pub shader_location: u8,
 }
 
+impl From<VertexAttribute> for VertexAttributeDescriptor {
+    fn from(va: VertexAttribute) -> Self {
+        Self {
+            usage: va.usage,
+            data_type: va.data_type,
+            size: va.size,
+            divisor: va.divisor,
+            shader_location: va.shader_location,
+        }
+    }
+}
+
 /// Vertex attribute is a simple "bridge" between raw data and its interpretation. In
 /// other words it defines how to treat raw data in vertex shader.
 #[derive(Visit, Copy, Clone, Default, Debug)]
@@ -304,6 +316,15 @@ impl<'a> VertexBufferRefMut<'a> {
         .unwrap();
         self.vertex_buffer.data.extend_from_slice(temp.as_slice());
         self.vertex_buffer.vertex_count += 1;
+    }
+
+    /// Duplicates content desired amount of `times`.
+    pub fn multiplicate(&mut self, times: u32) {
+        let data = self.vertex_buffer.data.clone();
+        for _ in 0..times {
+            self.vertex_buffer.data.extend_from_slice(&data);
+        }
+        self.vertex_buffer.vertex_count *= times;
     }
 
     /// Adds new attribute at the end of layout, reorganizes internal data storage to be

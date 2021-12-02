@@ -231,15 +231,16 @@ impl CsmRenderer {
                     .and_then(|shader_set| shader_set.render_passes.get(&self.render_pass_name))
                 {
                     for instance in batch.instances.iter() {
-                        let node = &graph[instance.owner];
-
-                        let visible = match node {
-                            Node::Mesh(mesh) => mesh.global_visibility() && mesh.cast_shadows(),
-                            Node::Terrain(terrain) => {
-                                terrain.global_visibility() && terrain.cast_shadows()
-                            }
-                            _ => false,
-                        };
+                        let visible = graph
+                            .try_get(instance.owner)
+                            .map(|node| match node {
+                                Node::Mesh(mesh) => mesh.global_visibility() && mesh.cast_shadows(),
+                                Node::Terrain(terrain) => {
+                                    terrain.global_visibility() && terrain.cast_shadows()
+                                }
+                                _ => false,
+                            })
+                            .unwrap_or(true);
 
                         if !visible {
                             continue;

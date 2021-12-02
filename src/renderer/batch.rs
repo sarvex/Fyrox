@@ -1,10 +1,21 @@
-use crate::core::sstorage::ImmutableString;
 use crate::{
-    core::{algebra::Matrix4, arrayvec::ArrayVec, parking_lot::Mutex, pool::Handle, scope_profile},
+    core::{
+        algebra::{Matrix4, Point3},
+        arrayvec::ArrayVec,
+        math::TriangleDefinition,
+        parking_lot::Mutex,
+        pool::Handle,
+        scope_profile,
+        sstorage::ImmutableString,
+    },
     material::{Material, PropertyValue},
     scene::{
         graph::Graph,
-        mesh::{surface::SurfaceData, RenderPath},
+        mesh::{
+            buffer::{GeometryBuffer, VertexAttributeUsage, VertexReadTrait, VertexWriteTrait},
+            surface::SurfaceData,
+            RenderPath,
+        },
         node::Node,
     },
     utils::log::{Log, MessageKind},
@@ -19,6 +30,7 @@ use std::{
 pub const BONE_MATRICES_COUNT: usize = 64;
 
 pub struct SurfaceInstance {
+    /// Can be [`Handle::NONE`] if it is a fake surface instance for batching.
     pub owner: Handle<Node>,
     pub world_transform: Matrix4<f32>,
     pub bone_matrices: ArrayVec<Matrix4<f32>, BONE_MATRICES_COUNT>,
@@ -31,7 +43,6 @@ pub struct Batch {
     pub material: Arc<Mutex<Material>>,
     pub is_skinned: bool,
     pub render_path: RenderPath,
-    pub decal_layer_index: u8,
     sort_index: u64,
 }
 
@@ -55,6 +66,92 @@ pub struct BatchStorage {
 }
 
 impl BatchStorage {
+    /// Puts instances of each batch into a single vertex and index buffers.
+    fn try_optimize_batches(&mut self) {
+        for batch in self
+            .batches
+            .iter_mut()
+            .filter(|b| b.instances.len() > 1 && !b.is_skinned)
+        {
+            let src_data = batch.data.lock();
+
+            // Clone vertex buffer and duplicate its contents n times.
+            let mut vertex_buffer = src_data.vertex_buffer.clone();
+            let mut vertex_buffer_ref_mut = vertex_buffer.modify();
+            vertex_buffer_ref_mut.multiplicate(batch.instances.len() as u32);
+
+            let mut triangles = Vec::new();
+
+            let mut iterator = vertex_buffer_ref_mut.iter_mut();
+            let mut start_index = 0;
+            for instance in batch.instances.iter() {
+                // Transform vertices first.
+                for _ in 0..src_data.vertex_buffer.vertex_count() {
+                    let mut vertex = iterator.next().unwrap();
+
+                    if let Ok(position) = vertex.read_3_f32(VertexAttributeUsage::Position) {
+                        vertex
+                            .write_3_f32(
+                                VertexAttributeUsage::Position,
+                                instance
+                                    .world_transform
+                                    .transform_point(&Point3::from(position))
+                                    .coords,
+                            )
+                            .unwrap();
+                    }
+
+                    if let Ok(normal) = vertex.read_3_f32(VertexAttributeUsage::Normal) {
+                        vertex
+                            .write_3_f32(
+                                VertexAttributeUsage::Normal,
+                                instance.world_transform.transform_vector(&normal),
+                            )
+                            .unwrap();
+                    }
+
+                    if let Ok(tangent) = vertex.read_3_f32(VertexAttributeUsage::Tangent) {
+                        vertex
+                            .write_3_f32(
+                                VertexAttributeUsage::Tangent,
+                                instance.world_transform.transform_vector(&tangent),
+                            )
+                            .unwrap();
+                    }
+                }
+
+                // Fill triangles and offset each block.
+                for triangle in src_data.geometry_buffer.iter() {
+                    triangles.push(TriangleDefinition([
+                        triangle[0] + start_index,
+                        triangle[1] + start_index,
+                        triangle[2] + start_index,
+                    ]))
+                }
+                start_index += src_data.vertex_buffer.vertex_count();
+            }
+
+            drop(iterator);
+            drop(vertex_buffer_ref_mut);
+            drop(src_data);
+
+            // Replace batch data for rendering.
+            let new_batch_data =
+                SurfaceData::new(vertex_buffer, GeometryBuffer::new(triangles), true);
+            batch.data = Arc::new(Mutex::new(new_batch_data));
+
+            // We also need to ensure that new data won't be rendered multiple times.
+            batch.instances.clear();
+            batch.instances.push(SurfaceInstance {
+                owner: Default::default(),
+                // Pass identity matrix since our geometry was already transformed.
+                world_transform: Matrix4::identity(),
+                bone_matrices: Default::default(),
+                depth_offset: 0.0,
+            })
+        }
+    }
+
     pub(in crate) fn generate_batches(&mut self, graph: &Graph) {
         scope_profile!();
 
@@ -94,7 +191,6 @@ impl BatchStorage {
                                 material: surface.material().clone(),
                                 is_skinned: !surface.bones.is_empty(),
                                 render_path: mesh.render_path(),
-                                decal_layer_index: mesh.decal_layer_index(),
                             });
                             self.batches.last_mut().unwrap()
                         };
@@ -154,7 +250,6 @@ impl BatchStorage {
                                             is_skinned: false,
                                             render_path: RenderPath::Deferred,
                                             sort_index: layer_index as u64,
-                                            decal_layer_index: terrain.decal_layer_index(),
                                         });
                                         self.batches.last_mut().unwrap()
                                     };
@@ -190,5 +285,7 @@ impl BatchStorage {
         }
 
         self.batches.sort_unstable_by_key(|b| b.sort_index);
+
+        self.try_optimize_batches();
     }
 }
